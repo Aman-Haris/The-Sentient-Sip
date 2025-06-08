@@ -1,6 +1,6 @@
 mistralai
 pygame
 SpeechRecognition
-gTTS 
-playsound
-setuptools
+gTTS
+PyAudio
+ffmpeg-python

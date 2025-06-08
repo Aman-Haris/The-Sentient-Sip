@@ -23,3 +23,19 @@ async def llm(user_input):
         max_tokens=Max_Tokens
     )
     return chat_response.choices[0].message.content.strip()
+
+from gtts import gTTS
+from playsound import playsound
+import os
+import tempfile
+
+async def speak(text: str):
+    """Convert text to speech using gTTS and play it."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fp:
+            tts = gTTS(text=text, lang="en", slow=False)
+            tts.save(fp.name)
+            playsound(fp.name)
+        os.unlink(fp.name)  # Clean up
+    except Exception as e:
+        print(f"Voice error: {e}")  # Fallback to text-only

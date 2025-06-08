@@ -1,6 +1,6 @@
 # The Sentient Sip ☕🤖
 
-An AI-powered café where **Jeeves**, your snarky digital waiter, serves up conversation alongside imaginary coffee. Built with Mistral AI and Python.
+An AI-powered café where Rita, your snarky digital waiter, serves up conversation alongside imaginary coffee. Built with Mistral AI and Python.
 
 ## Features
 - Multi-turn dialogues with a personality-driven NPC.
