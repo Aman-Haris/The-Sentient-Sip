@@ -1,0 +1,6 @@
+mistralai
+pygame
+SpeechRecognition
+gTTS 
+playsound
+setuptools
