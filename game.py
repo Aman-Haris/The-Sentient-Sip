@@ -1,4 +1,5 @@
 import pygame
+from pygame._sdl2 import Window
 from llm import invoke_model
 import asyncio
 import os
@@ -11,10 +12,11 @@ import subprocess
 import threading
 from queue import Queue
 
-# Initialize Pygame
+# Initialize Pygame with larger window
 pygame.init()
-screen_width, screen_height = 1280, 720
-screen = pygame.display.set_mode((screen_width, screen_height))
+screen_width, screen_height = 1500, 750  # Increased window size
+screen = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+Window.from_display_module().maximize()
 pygame.display.set_caption("The Sentient Sip")
 clock = pygame.time.Clock()
 
@@ -27,6 +29,13 @@ PINK = (255, 200, 200)
 GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW_GLOW = (255, 255, 0, 30)
+
+# Chat system constants
+MAX_VISIBLE_MESSAGES = 20  # Increased message history
+LINE_HEIGHT = 30
+TEXTBOX_HEIGHT = 500  # Larger text box
+TEXTBOX_WIDTH = screen_width - 100
+SCROLL_SPEED = 3  # Lines to scroll at once
 
 # Voice mode
 voice_mode = False
@@ -50,6 +59,9 @@ def load_asset(path, fallback_size=None, fallback_color=(255, 0, 255)):
 
 bg = load_asset("assets/cafe_background.png", (screen_width, screen_height), (200, 200, 200))
 rita = load_asset("assets/rita.png", (200, 400), (255, 0, 0))
+desired_width = 700
+desired_height = 700
+rita = pygame.transform.scale(load_asset("assets/rita.png"), (desired_width, desired_height))
 font = pygame.font.Font("assets/pixel_font.ttf", 24) if os.path.exists("assets/pixel_font.ttf") else pygame.font.SysFont("Arial", 24)
 title_font = pygame.font.Font("assets/pixel_font.ttf", 48) if os.path.exists("assets/pixel_font.ttf") else pygame.font.SysFont("Arial", 48)
 
@@ -60,20 +72,20 @@ STATE_CHAT = 2
 game_state = STATE_START
 
 # UI Elements
-rita_rect = pygame.Rect(screen_width//2 - 100, screen_height//2 - 100, 200, 400)
+rita_rect = pygame.Rect(screen_width//2 - rita.get_width()//2, screen_height//2 - rita.get_height()//2, rita.get_width(), rita.get_height())
 start_button = pygame.Rect(screen_width//2 - 150, screen_height//2, 300, 80)
 info_button = pygame.Rect(screen_width//2 - 150, screen_height//2 + 100, 300, 80)
 back_button = pygame.Rect(50, 50, 200, 60)
 voice_button = pygame.Rect(screen_width - 220, 50, 170, 40)
 
 # Chat system
-history = []
 full_history = []
+chat_lines = []
+scroll_offset = 0
 input_text = ""
 typing_progress = 0
 current_typing_text = ""
 is_typing = False
-history_offset = 0
 waiting_for_llm = False
 
 def render_text_with_wrap(text, font, color, max_width):
@@ -86,27 +98,59 @@ def render_text_with_wrap(text, font, color, max_width):
         if font.size(test_line)[0] <= max_width:
             current_line.append(word)
         else:
-            if current_line:  # Only append if current_line is not empty
+            if current_line:
                 lines.append(' '.join(current_line))
                 current_line = [word]
-            else:  # Handle very long words
+            else:
                 lines.append(word)
                 current_line = []
     
-    if current_line:  # Don't forget the last line
+    if current_line:
         lines.append(' '.join(current_line))
     
-    return [font.render(line, True, color) for line in lines]
+    surfaces = []
+    for line in lines:
+        surfaces.append(font.render(line, True, color))
+    return surfaces
+
+def update_chat_display():
+    global chat_lines, scroll_offset
+    
+    chat_lines = []
+    y_offset = 0
+    
+    for msg in full_history[-MAX_VISIBLE_MESSAGES:]:
+        speaker = "You" if msg["role"] == "user" else "Rita"
+        speaker_color = BLUE if speaker == "You" else RED
+        
+        # Add speaker tag
+        speaker_surface = font.render(f"{speaker}: ", True, speaker_color)
+        chat_lines.append((speaker_surface, y_offset))
+        y_offset += LINE_HEIGHT
+        
+        # Add message text
+        wrapped_surfaces = render_text_with_wrap(
+            msg["content"], font, BLACK, 
+            TEXTBOX_WIDTH - 50 - speaker_surface.get_width()
+        )
+        for surface in wrapped_surfaces:
+            chat_lines.append((surface, y_offset))
+            y_offset += LINE_HEIGHT
+        
+        # Add space between messages
+        y_offset += LINE_HEIGHT // 2
+    
+    # Auto-scroll to bottom if not manually scrolling
+    if scroll_offset + TEXTBOX_HEIGHT >= y_offset - LINE_HEIGHT:
+        scroll_offset = max(0, y_offset - TEXTBOX_HEIGHT + 100)
 
 def speak_async(text):
-    """Non-blocking TTS function using threading"""
     def _speak():
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fp:
                 tts = gTTS(text=text, lang="en")
                 tts.save(fp.name)
             
-            # Use subprocess to avoid playsound issues
             subprocess.run(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", fp.name], 
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             os.unlink(fp.name)
@@ -118,7 +162,6 @@ def speak_async(text):
     thread.start()
 
 def listen_async():
-    """Non-blocking speech recognition using threading"""
     def _listen():
         global mic_animation_active, listening
         r = sr.Recognizer()
@@ -146,10 +189,8 @@ def listen_async():
     thread.start()
 
 def get_llm_response_async(message, chat_history=None):
-    """Non-blocking LLM response using threading"""
     def _get_response():
         try:
-            # Create new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             response = loop.run_until_complete(invoke_model(message, chat_history))
@@ -164,25 +205,17 @@ def get_llm_response_async(message, chat_history=None):
     thread.start()
 
 def handle_chat_input(player_message):
-    global history, full_history, current_typing_text, typing_progress, is_typing, waiting_for_llm
+    global full_history, scroll_offset, waiting_for_llm
     
     if not player_message.strip():
         return
         
-    # Add player message to history (both display and LLM formats)
-    history.append(("You", player_message))
     full_history.append({"role": "user", "content": player_message})
+    update_chat_display()
     
-    # Prepare chat history for LLM (use full_history which is already in correct format)
     llm_history = full_history.copy()
-    
-    # Start waiting for LLM response
     waiting_for_llm = True
     get_llm_response_async(player_message, llm_history)
-    
-    # Keep only last 2 exchanges in visible history
-    if len(history) > 4:  # 2 exchanges = 4 messages
-        history = history[-4:]
 
 def draw_button(rect, text, color, hover_color):
     mouse_pos = pygame.mouse.get_pos()
@@ -197,41 +230,26 @@ def draw_button(rect, text, color, hover_color):
     return rect.collidepoint(mouse_pos)
 
 def draw_microphone_icon(x, y, active=False):
-    """Draw a simple microphone icon using basic shapes"""
     color = RED if active else GRAY
     
-    # Microphone body (rectangle)
     mic_body = pygame.Rect(x + 8, y + 5, 8, 15)
     pygame.draw.rect(screen, color, mic_body, border_radius=4)
     pygame.draw.rect(screen, BLACK, mic_body, 1, border_radius=4)
     
-    # Microphone base (line)
     pygame.draw.line(screen, color, (x + 12, y + 20), (x + 12, y + 25), 2)
     pygame.draw.line(screen, color, (x + 8, y + 25), (x + 16, y + 25), 2)
     
-    # Draw sound waves if active
     if active:
         for i in range(1, 4):
             wave_radius = 5 + i * 3
-            # Draw arc-like lines to simulate sound waves
-            for angle in range(-30, 31, 10):
-                start_x = x + 25 + int(wave_radius * 0.8)
-                start_y = y + 12
-                end_x = start_x + int(wave_radius * 0.2)
-                end_y = start_y
-                
-                # Simple wave effect
-                wave_color = (RED[0], RED[1], RED[2], max(255 - i * 60, 60))
-                pygame.draw.circle(screen, RED, (x + 12, y + 12), wave_radius, 1)
+            wave_color = (RED[0], RED[1], RED[2], max(255 - i * 60, 60))
+            pygame.draw.circle(screen, RED, (x + 12, y + 12), wave_radius, 1)
 
 def draw_keyboard_icon(x, y):
-    """Draw a simple keyboard icon using rectangles"""
-    # Keyboard outline
     keyboard_rect = pygame.Rect(x + 2, y + 8, 20, 12)
     pygame.draw.rect(screen, GRAY, keyboard_rect, border_radius=2)
     pygame.draw.rect(screen, BLACK, keyboard_rect, 1, border_radius=2)
     
-    # Keys
     for row in range(2):
         for col in range(4):
             key_x = x + 4 + col * 4
@@ -241,7 +259,6 @@ def draw_keyboard_icon(x, y):
             pygame.draw.rect(screen, BLACK, key_rect, 1)
 
 def draw_listening_animation(x, y):
-    """Draw animated listening indicator"""
     global mic_animation_frames
     
     if not listening:
@@ -249,20 +266,18 @@ def draw_listening_animation(x, y):
     
     mic_animation_frames += 1
     
-    # Pulsing circle
     pulse_size = int(10 + 5 * abs(math.sin(mic_animation_frames * 0.1)))
     pulse_surface = pygame.Surface((pulse_size * 2, pulse_size * 2), pygame.SRCALPHA)
     pygame.draw.circle(pulse_surface, (255, 0, 0, 100), (pulse_size, pulse_size), pulse_size)
     screen.blit(pulse_surface, (x - pulse_size + 12, y - pulse_size + 12))
     
-    # "LISTENING..." text
     listening_text = font.render("LISTENING...", True, RED)
     screen.blit(listening_text, (x - 50, y + 35))
 
 # Main game loop
 running = True
 while running:
-    dt = clock.tick(30) / 1000.0
+    dt = clock.tick(60) / 1000.0  # Increased to 60 FPS for smoother scrolling
 
     # Check for voice input
     if not voice_input_queue.empty():
@@ -270,9 +285,8 @@ while running:
         if status == "success":
             handle_chat_input(message)
         else:
-            # Handle voice recognition errors by showing them in chat
-            history.append(("System", message))
-            full_history.append(("System", message))
+            full_history.append({"role": "system", "content": message})
+            update_chat_display()
 
     # Check for LLM response
     if not llm_response_queue.empty():
@@ -287,13 +301,12 @@ while running:
             if voice_mode:
                 speak_async(response)
             
-            history.append(("Rita", response))
             full_history.append({"role": "assistant", "content": response})
+            update_chat_display()
         else:
-            # Handle LLM errors
             error_msg = "Sorry, I'm having trouble responding right now."
-            history.append(("Rita", error_msg))
-            full_history.append(("Rita", error_msg))
+            full_history.append({"role": "assistant", "content": error_msg})
+            update_chat_display()
         
         is_typing = False
 
@@ -307,8 +320,8 @@ while running:
                 if start_button.collidepoint(event.pos):
                     game_state = STATE_CHAT
                     initial_message = "Welcome to The Sentient Sip! How can I help you today?"
-                    history = [("Rita", initial_message)]
                     full_history = [{"role": "assistant", "content": initial_message}]
+                    update_chat_display()
                 elif info_button.collidepoint(event.pos):
                     game_state = STATE_INFO
                     
@@ -318,9 +331,12 @@ while running:
             elif game_state == STATE_CHAT and voice_button.collidepoint(event.pos):
                 voice_mode = not voice_mode
                 
+        elif event.type == pygame.MOUSEWHEEL:
+            if game_state == STATE_CHAT:
+                scroll_offset = max(0, scroll_offset - event.y * SCROLL_SPEED * LINE_HEIGHT)
+                
         elif event.type == pygame.KEYDOWN and game_state == STATE_CHAT:
             if voice_mode and event.key == pygame.K_SPACE and not listening:
-                # Use SPACE to trigger voice input in voice mode
                 listen_async()
             elif not voice_mode:
                 if event.key == pygame.K_RETURN and not waiting_for_llm:
@@ -328,19 +344,18 @@ while running:
                     input_text = ""
                 elif event.key == pygame.K_BACKSPACE:
                     input_text = input_text[:-1]
-                # In the keydown event handler:
-                elif event.key == pygame.K_PAGEUP and len(history) > 4:
-                    history_offset = min(history_offset + 2, len(history) - 4)
-                    history = history[-(4 + history_offset):-history_offset] if history_offset > 0 else history[-4:]
-                elif event.key == pygame.K_PAGEDOWN and history_offset > 0:
-                    history_offset = max(history_offset - 2, 0)
-                    history = history[-(4 + history_offset):-history_offset] if history_offset > 0 else history[-4:]
+                elif event.key == pygame.K_UP:
+                    scroll_offset = max(0, scroll_offset - SCROLL_SPEED * LINE_HEIGHT)
+                elif event.key == pygame.K_DOWN:
+                    max_offset = max(0, len(chat_lines) * LINE_HEIGHT - TEXTBOX_HEIGHT + 100)
+                    scroll_offset = min(max_offset, scroll_offset + SCROLL_SPEED * LINE_HEIGHT)
                 elif event.unicode and event.unicode.isprintable():
                     input_text += event.unicode
 
-    # Update animations
+    # Update typing animation
     if game_state == STATE_CHAT and is_typing and typing_progress < len(current_typing_text):
         typing_progress += 30 * dt
+        update_chat_display()
 
     # Drawing
     screen.fill(BLACK)
@@ -366,7 +381,7 @@ while running:
             "a futuristic café.", "", "Controls:",
             "TEXT MODE:", "- Type and press ENTER to chat",
             "VOICE MODE:", "- Press SPACE to start speaking",
-            "- Page Up/Down to browse history", "",
+            "- Mouse wheel or Up/Down arrows to scroll", "",
             "Created with Mistral AI and Pygame"
         ]
         
@@ -392,7 +407,6 @@ while running:
         pygame.draw.rect(screen, voice_color, voice_button, border_radius=20)
         pygame.draw.rect(screen, BLACK, voice_button, 2, border_radius=20)
         
-        # Draw mode-specific icon and text
         if voice_mode:
             draw_microphone_icon(voice_button.x + 10, voice_button.y + 10, listening)
         else:
@@ -402,48 +416,51 @@ while running:
         screen.blit(font.render(mode_text, True, BLACK), 
                    (voice_button.x + 40, voice_button.y + 10))
         
-        # Glow effect for voice mode
         if voice_mode:
             glow = pygame.Surface((voice_button.width+6, voice_button.height+6), pygame.SRCALPHA)
             pygame.draw.rect(glow, YELLOW_GLOW, (0, 0, voice_button.width+6, voice_button.height+6), border_radius=23)
             screen.blit(glow, (voice_button.x-3, voice_button.y-3))
         
-        # Listening animation
         if voice_mode:
             draw_listening_animation(screen_width - 270, 55)
 
         # Text box
-        textbox_rect = pygame.Rect(50, screen_height - 250, screen_width - 100, 200)
+        textbox_rect = pygame.Rect(50, screen_height - TEXTBOX_HEIGHT - 50, TEXTBOX_WIDTH, TEXTBOX_HEIGHT)
         pygame.draw.rect(screen, BLACK, textbox_rect)
         pygame.draw.rect(screen, WHITE, (textbox_rect.x+2, textbox_rect.y+2, textbox_rect.width-4, textbox_rect.height-4))
 
-        # Messages
-        y_offset = textbox_rect.y + 20
-        
-        for speaker, text in history:
-            # Color code speakers
-            speaker_color = RED if speaker == "Rita" else BLUE if speaker == "You" else GRAY
-            name_surface = font.render(f"{speaker}:", True, speaker_color)
-            screen.blit(name_surface, (textbox_rect.x + 20, y_offset))
-            
-            for line in render_text_with_wrap(text, font, BLACK, textbox_rect.width - 40 - name_surface.get_width()):
-                screen.blit(line, (textbox_rect.x + 30 + name_surface.get_width(), y_offset))
-                y_offset += line.get_height() + 5
-            y_offset += 10  # Extra space between messages
+        # Draw chat lines with scrolling
+        screen.set_clip(textbox_rect)
+        y_pos = textbox_rect.y + 10 - scroll_offset
+        for surface, y_offset in chat_lines:
+            if y_pos + y_offset < textbox_rect.y + textbox_rect.height - 20:
+                screen.blit(surface, (textbox_rect.x + 20, y_pos + y_offset))
+        screen.set_clip(None)
 
-        # Input box (only show in text mode)
-        if not voice_mode:
-            input_rect = pygame.Rect(textbox_rect.x + 20, textbox_rect.y + textbox_rect.height - 50, textbox_rect.width - 40, 40)
-            pygame.draw.rect(screen, WHITE, input_rect)
-            pygame.draw.rect(screen, BLACK, input_rect, 2)
-            
-            input_surface = font.render(f"> {input_text}", True, BLACK)
-            screen.blit(input_surface, (input_rect.x + 10, input_rect.y + 10))
-            
-            # Cursor
-            if pygame.time.get_ticks() % 1000 < 500:
-                cursor_x = input_rect.x + 20 + font.size(f"> {input_text}")[0]
-                pygame.draw.rect(screen, BLACK, (cursor_x, input_rect.y + 10, 2, 20))
+        # Scroll bar
+        if len(chat_lines) * LINE_HEIGHT > TEXTBOX_HEIGHT:
+            scrollbar_height = min(TEXTBOX_HEIGHT, 
+                                 (TEXTBOX_HEIGHT ** 2) / (len(chat_lines) * LINE_HEIGHT))
+            scrollbar_pos = (scroll_offset / (len(chat_lines) * LINE_HEIGHT)) * TEXTBOX_HEIGHT
+            pygame.draw.rect(screen, GRAY, (
+                textbox_rect.right - 10,
+                textbox_rect.y + scrollbar_pos,
+                8,
+                scrollbar_height
+            ))
+
+        # Input box
+        input_rect = pygame.Rect(textbox_rect.x + 20, textbox_rect.y + textbox_rect.height + 10, textbox_rect.width - 40, 40)
+        pygame.draw.rect(screen, WHITE, input_rect)
+        pygame.draw.rect(screen, BLACK, input_rect, 2)
+        
+        input_surface = font.render(f"> {input_text}", True, BLACK)
+        screen.blit(input_surface, (input_rect.x + 10, input_rect.y + 10))
+        
+        # Cursor
+        if pygame.time.get_ticks() % 1000 < 500:
+            cursor_x = input_rect.x + 20 + font.size(f"> {input_text}")[0]
+            pygame.draw.rect(screen, BLACK, (cursor_x, input_rect.y + 10, 2, 20))
 
         # Status indicators
         status_y = textbox_rect.y - 60
@@ -453,16 +470,9 @@ while running:
         
         # Hints
         hint_text = "Press SPACE to talk" if voice_mode else "Type and press ENTER"
-        if len(full_history) > 4:
-            hint_text += " | Page Up/Down: History"
+        if len(full_history) > 1:
+            hint_text += " | Mouse wheel or Up/Down to scroll"
         screen.blit(font.render(hint_text, True, GRAY), (textbox_rect.x + 20, textbox_rect.y - 30))
-
-        # History indicator
-        if len(full_history) > 4:
-            current_page = history_offset // 2 + 1
-            total_pages = (len(full_history) - 1) // 2
-            screen.blit(font.render(f"Page {current_page}/{total_pages}", True, GRAY),
-                       (textbox_rect.x + textbox_rect.width - 150, textbox_rect.y - 30))
 
     pygame.display.flip()
 
