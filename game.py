@@ -1,5 +1,5 @@
 import pygame
-from llm import llm
+from llm import invoke_model
 import asyncio
 import os
 import time
@@ -145,14 +145,14 @@ def listen_async():
     thread.daemon = True
     thread.start()
 
-def get_llm_response_async(message):
+def get_llm_response_async(message, chat_history=None):
     """Non-blocking LLM response using threading"""
     def _get_response():
         try:
             # Create new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            response = loop.run_until_complete(llm(message))
+            response = loop.run_until_complete(invoke_model(message, chat_history))
             llm_response_queue.put(("success", response))
         except Exception as e:
             llm_response_queue.put(("error", f"Error getting response: {e}"))
@@ -169,13 +169,16 @@ def handle_chat_input(player_message):
     if not player_message.strip():
         return
         
-    # Add player message to history
+    # Add player message to history (both display and LLM formats)
     history.append(("You", player_message))
-    full_history.append(("You", player_message))
+    full_history.append({"role": "user", "content": player_message})
+    
+    # Prepare chat history for LLM (use full_history which is already in correct format)
+    llm_history = full_history.copy()
     
     # Start waiting for LLM response
     waiting_for_llm = True
-    get_llm_response_async(player_message)
+    get_llm_response_async(player_message, llm_history)
     
     # Keep only last 2 exchanges in visible history
     if len(history) > 4:  # 2 exchanges = 4 messages
@@ -285,7 +288,7 @@ while running:
                 speak_async(response)
             
             history.append(("Rita", response))
-            full_history.append(("Rita", response))
+            full_history.append({"role": "assistant", "content": response})
         else:
             # Handle LLM errors
             error_msg = "Sorry, I'm having trouble responding right now."
@@ -303,8 +306,9 @@ while running:
             if game_state == STATE_START:
                 if start_button.collidepoint(event.pos):
                     game_state = STATE_CHAT
-                    history = [("Rita", "Welcome to The Sentient Sip! How can I help you today?")]
-                    full_history = history.copy()
+                    initial_message = "Welcome to The Sentient Sip! How can I help you today?"
+                    history = [("Rita", initial_message)]
+                    full_history = [{"role": "assistant", "content": initial_message}]
                 elif info_button.collidepoint(event.pos):
                     game_state = STATE_INFO
                     
@@ -324,19 +328,13 @@ while running:
                     input_text = ""
                 elif event.key == pygame.K_BACKSPACE:
                     input_text = input_text[:-1]
-                elif event.key == pygame.K_PAGEUP and len(full_history) > 4:
-                    history_offset = min(history_offset + 2, len(full_history) - 4)
-                    start_idx = max(0, len(full_history) - 4 - history_offset)
-                    end_idx = len(full_history) - history_offset
-                    history = full_history[start_idx:end_idx]
+                # In the keydown event handler:
+                elif event.key == pygame.K_PAGEUP and len(history) > 4:
+                    history_offset = min(history_offset + 2, len(history) - 4)
+                    history = history[-(4 + history_offset):-history_offset] if history_offset > 0 else history[-4:]
                 elif event.key == pygame.K_PAGEDOWN and history_offset > 0:
                     history_offset = max(history_offset - 2, 0)
-                    if history_offset == 0:
-                        history = full_history[-4:] if len(full_history) > 4 else full_history
-                    else:
-                        start_idx = max(0, len(full_history) - 4 - history_offset)
-                        end_idx = len(full_history) - history_offset
-                        history = full_history[start_idx:end_idx]
+                    history = history[-(4 + history_offset):-history_offset] if history_offset > 0 else history[-4:]
                 elif event.unicode and event.unicode.isprintable():
                     input_text += event.unicode
 
