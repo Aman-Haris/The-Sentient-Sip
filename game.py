@@ -29,13 +29,14 @@ PINK = (255, 200, 200)
 GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW_GLOW = (255, 255, 0, 30)
+SEMI_TRANSPARENT = (200, 200, 200, 150)  # Light gray with alpha transparency
 
 # Chat system constants
 MAX_VISIBLE_MESSAGES = 20  # Increased message history
 LINE_HEIGHT = 30
-TEXTBOX_HEIGHT = 500  # Larger text box
-TEXTBOX_WIDTH = screen_width - 100
-SCROLL_SPEED = 3  # Lines to scroll at once
+TEXTBOX_HEIGHT = 400  # Reduced height
+TEXTBOX_WIDTH = screen_width - 50  # Increased width
+SCROLL_SPEED = 5  # Smoother scrolling
 
 # Voice mode
 voice_mode = False
@@ -76,7 +77,7 @@ rita_rect = pygame.Rect(screen_width//2 - rita.get_width()//2, screen_height//2 
 start_button = pygame.Rect(screen_width//2 - 150, screen_height//2, 300, 80)
 info_button = pygame.Rect(screen_width//2 - 150, screen_height//2 + 100, 300, 80)
 back_button = pygame.Rect(50, 50, 200, 60)
-voice_button = pygame.Rect(screen_width - 220, 50, 170, 40)
+voice_button = pygame.Rect(screen_width - 200, 50, 150, 40)  # Adjusted size
 
 # Chat system
 full_history = []
@@ -141,8 +142,9 @@ def update_chat_display():
         y_offset += LINE_HEIGHT // 2
     
     # Auto-scroll to bottom if not manually scrolling
-    if scroll_offset + TEXTBOX_HEIGHT >= y_offset - LINE_HEIGHT:
-        scroll_offset = max(0, y_offset - TEXTBOX_HEIGHT + 100)
+    max_offset = max(0, y_offset - TEXTBOX_HEIGHT + 20)  # +20 for padding
+    if scroll_offset > max_offset:
+        scroll_offset = max_offset
 
 def speak_async(text):
     def _speak():
@@ -231,25 +233,21 @@ def draw_button(rect, text, color, hover_color):
 
 def draw_microphone_icon(x, y, active=False):
     color = RED if active else GRAY
-    
+    # All coordinates are relative to x,y now
     mic_body = pygame.Rect(x + 8, y + 5, 8, 15)
     pygame.draw.rect(screen, color, mic_body, border_radius=4)
     pygame.draw.rect(screen, BLACK, mic_body, 1, border_radius=4)
-    
     pygame.draw.line(screen, color, (x + 12, y + 20), (x + 12, y + 25), 2)
     pygame.draw.line(screen, color, (x + 8, y + 25), (x + 16, y + 25), 2)
-    
     if active:
         for i in range(1, 4):
             wave_radius = 5 + i * 3
-            wave_color = (RED[0], RED[1], RED[2], max(255 - i * 60, 60))
             pygame.draw.circle(screen, RED, (x + 12, y + 12), wave_radius, 1)
 
 def draw_keyboard_icon(x, y):
     keyboard_rect = pygame.Rect(x + 2, y + 8, 20, 12)
     pygame.draw.rect(screen, GRAY, keyboard_rect, border_radius=2)
     pygame.draw.rect(screen, BLACK, keyboard_rect, 1, border_radius=2)
-    
     for row in range(2):
         for col in range(4):
             key_x = x + 4 + col * 4
@@ -402,46 +400,80 @@ while running:
             screen.blit(highlight, (rita_rect.x-5, rita_rect.y-5))
         screen.blit(rita, (rita_rect.x, rita_rect.y))
 
-        # Voice toggle button
+        # Voice toggle button with centered content and hover effects
         voice_color = GREEN if voice_mode else PINK
+        hovered = voice_button.collidepoint(pygame.mouse.get_pos())
+        
+        # Add hover effect
+        if hovered:
+            voice_color = [min(c + 30, 255) for c in voice_color]  # Lighten color on hover
+        
+        # Add drop shadow
+        shadow_surface = pygame.Surface((voice_button.width, voice_button.height), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surface, (*BLACK, 30), (2, 2, voice_button.width, voice_button.height), border_radius=20)
+        screen.blit(shadow_surface, (voice_button.x + 2, voice_button.y + 2))
+        
+        # Draw button
         pygame.draw.rect(screen, voice_color, voice_button, border_radius=20)
         pygame.draw.rect(screen, BLACK, voice_button, 2, border_radius=20)
-        
-        if voice_mode:
-            draw_microphone_icon(voice_button.x + 10, voice_button.y + 10, listening)
-        else:
-            draw_keyboard_icon(voice_button.x + 10, voice_button.y + 10)
-        
+
+        # Calculate centered positions
         mode_text = "VOICE" if voice_mode else "TEXT"
-        screen.blit(font.render(mode_text, True, BLACK), 
-                   (voice_button.x + 40, voice_button.y + 10))
-        
+        text_surface = font.render(mode_text, True, BLACK)
+        icon_width = 20  # Fixed width for both icons
+
+        # Center the combined icon+text content
+        total_content_width = icon_width + 10 + text_surface.get_width()  # 10 = spacing
+        start_x = voice_button.x + (voice_button.width - total_content_width) // 2
+        icon_y = voice_button.y + (voice_button.height - 20) // 2  # Center vertically
+        text_y = voice_button.y + (voice_button.height - text_surface.get_height()) // 2
+
+        # Draw icon
         if voice_mode:
-            glow = pygame.Surface((voice_button.width+6, voice_button.height+6), pygame.SRCALPHA)
-            pygame.draw.rect(glow, YELLOW_GLOW, (0, 0, voice_button.width+6, voice_button.height+6), border_radius=23)
-            screen.blit(glow, (voice_button.x-3, voice_button.y-3))
-        
+            draw_microphone_icon(start_x, icon_y, listening)
+        else:
+            draw_keyboard_icon(start_x, icon_y)
+
+        # Draw text
+        screen.blit(text_surface, (start_x + icon_width + 10, text_y))  # 10 = spacing
+
+        # Add clickable indicator (pulsing border when hovered)
+        if hovered:
+            pulse_strength = abs(int(255 * (pygame.time.get_ticks() % 1000) / 500 - 1))
+            pulse_color = (min(255, 255 + pulse_strength), 
+                        min(255, 255 + pulse_strength), 
+                        min(255, 255 + pulse_strength))
+            pygame.draw.rect(screen, pulse_color, 
+                            (voice_button.x - 4, voice_button.y - 4, 
+                            voice_button.width + 8, voice_button.height + 8), 
+                            border_radius=24, width=3)
+
         if voice_mode:
             draw_listening_animation(screen_width - 270, 55)
 
         # Text box
-        textbox_rect = pygame.Rect(50, screen_height - TEXTBOX_HEIGHT - 50, TEXTBOX_WIDTH, TEXTBOX_HEIGHT)
-        pygame.draw.rect(screen, BLACK, textbox_rect)
-        pygame.draw.rect(screen, WHITE, (textbox_rect.x+2, textbox_rect.y+2, textbox_rect.width-4, textbox_rect.height-4))
+        textbox_rect = pygame.Rect(25, screen_height - TEXTBOX_HEIGHT - 50, TEXTBOX_WIDTH, TEXTBOX_HEIGHT)
+        textbox_surface = pygame.Surface((textbox_rect.width, textbox_rect.height), pygame.SRCALPHA)
+        textbox_surface.fill(SEMI_TRANSPARENT)
+        screen.blit(textbox_surface, (textbox_rect.x, textbox_rect.y))
+        pygame.draw.rect(screen, BLACK, textbox_rect, 2)
 
         # Draw chat lines with scrolling
         screen.set_clip(textbox_rect)
         y_pos = textbox_rect.y + 10 - scroll_offset
         for surface, y_offset in chat_lines:
-            if y_pos + y_offset < textbox_rect.y + textbox_rect.height - 20:
+            if (y_pos + y_offset + surface.get_height() > textbox_rect.y and 
+                y_pos + y_offset < textbox_rect.y + textbox_rect.height):
                 screen.blit(surface, (textbox_rect.x + 20, y_pos + y_offset))
         screen.set_clip(None)
 
         # Scroll bar
         if len(chat_lines) * LINE_HEIGHT > TEXTBOX_HEIGHT:
-            scrollbar_height = min(TEXTBOX_HEIGHT, 
-                                 (TEXTBOX_HEIGHT ** 2) / (len(chat_lines) * LINE_HEIGHT))
-            scrollbar_pos = (scroll_offset / (len(chat_lines) * LINE_HEIGHT)) * TEXTBOX_HEIGHT
+            total_content_height = len(chat_lines) * LINE_HEIGHT
+            visible_ratio = TEXTBOX_HEIGHT / total_content_height
+            scrollbar_height = max(30, TEXTBOX_HEIGHT * visible_ratio)  # Minimum height of 30px
+            scrollbar_pos = (scroll_offset / total_content_height) * TEXTBOX_HEIGHT
+            
             pygame.draw.rect(screen, GRAY, (
                 textbox_rect.right - 10,
                 textbox_rect.y + scrollbar_pos,
@@ -450,17 +482,21 @@ while running:
             ))
 
         # Input box
-        input_rect = pygame.Rect(textbox_rect.x + 20, textbox_rect.y + textbox_rect.height + 10, textbox_rect.width - 40, 40)
-        pygame.draw.rect(screen, WHITE, input_rect)
+        input_rect = pygame.Rect(textbox_rect.x + 10, textbox_rect.y + textbox_rect.height + 10, textbox_rect.width - 20, 35)
+        input_surface = pygame.Surface((input_rect.width, input_rect.height), pygame.SRCALPHA)
+        input_surface.fill(SEMI_TRANSPARENT)
+        screen.blit(input_surface, (input_rect.x, input_rect.y))
         pygame.draw.rect(screen, BLACK, input_rect, 2)
         
+        # Input text with centered vertical alignment
         input_surface = font.render(f"> {input_text}", True, BLACK)
-        screen.blit(input_surface, (input_rect.x + 10, input_rect.y + 10))
-        
-        # Cursor
+        screen.blit(input_surface, (input_rect.x + 10, input_rect.y + (input_rect.height - input_surface.get_height()) // 2 + 2))
+
+        # Cursor with proper alignment
         if pygame.time.get_ticks() % 1000 < 500:
-            cursor_x = input_rect.x + 20 + font.size(f"> {input_text}")[0]
-            pygame.draw.rect(screen, BLACK, (cursor_x, input_rect.y + 10, 2, 20))
+            cursor_x = input_rect.x + 10 + font.size(f"> {input_text}")[0]
+            cursor_height = font.get_height()
+            pygame.draw.rect(screen, BLACK, (cursor_x, input_rect.y + (input_rect.height - cursor_height) // 2, 2, cursor_height))
 
         # Status indicators
         status_y = textbox_rect.y - 60
