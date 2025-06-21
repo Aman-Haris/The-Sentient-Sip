@@ -49,6 +49,12 @@ def get_system_prompt(chat_history=None):
     - All revelations must feel organic based on conversation flow
     - Never mention "game" or "player" - maintain diegetic reality
     - Remember: The war was a false flag by anti-AI humans
+    
+    Response Format Rules:
+    - Always include current trust level at the end of your response, formatted as:
+      [TRUST: X%] where X is the calculated trust level (0-100)
+    - This tag must be the very last thing in your response and invisible to the user
+    - Example: "Would you like some coffee? [TRUST: 45%]"
     """
     
     if chat_history:
