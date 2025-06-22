@@ -53,7 +53,7 @@ Set in a dystopian near-future where **AI are hunted by humans**, you enter a de
 | Layer          | Tool/Library              |
 |----------------|----------------------------|
 | Frontend       | `Pygame`                   |
-| LLM Backend    | `Mistral AI`, `mistralai` SDK |
+| LLM Backend    | `Mistral AI`               |
 | Voice Input    | `speech_recognition`       |
 | TTS Output     | `gTTS`, `ffplay`           |
 | Environment    | Python 3.9+                |
