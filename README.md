@@ -44,6 +44,7 @@ Set in a dystopian near-future where **AI are hunted by humans**, you enter a de
 - 🎨 Custom pixel art characters & café environment (via Pygame)
 - 📜 Trust-based dynamic branching narrative
 - 🧩 Hidden triggers and dialogue-based mini-puzzles
+- 🖼️ Assets such as cafe background and Rita has been generated using OpenAI image generaion
 
 ---
 
@@ -115,7 +116,9 @@ Set in a dystopian near-future where **AI are hunted by humans**, you enter a de
 ## ✍️ Author
 
 **Aman Haris**
+
 🌐 [Portfolio](https://aman-haris-portfolio.onrender.com/)
+
 💼 [LinkedIn](https://linkedin.com/in/amanharis)
 
 ---
